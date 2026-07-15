@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: evpath-backend
+    runtime: node
+    buildCommand: npm install
+    startCommand: node src/app.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ORS_API_KEY
+        sync: false
+      - key: OCM_API_KEY
+        sync: false
+      - key: NOMINATIM_DELAY_MS
+        value: "1100"
+      - key: STATION_CACHE_TTL
+        value: "300"
+      - key: ROUTE_CACHE_TTL
+        value: "3600"
