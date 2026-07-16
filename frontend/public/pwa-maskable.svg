@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Full bleed background (maskable safe zone = inner 80%) -->
+  <rect width="512" height="512" fill="#091422"/>
+  <!-- Green lightning bolt — centred within safe zone -->
+  <polygon points="296,80 168,272 240,272 216,432 344,240 272,240" fill="#00E094"/>
+</svg>

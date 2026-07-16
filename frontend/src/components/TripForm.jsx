@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { geocodeSearch } from '../services/api'
+import { VEHICLE_PRESETS } from '../data/vehicles'
 
 const CONNECTOR_OPTIONS = [
   { value: 'CCS2',     label: 'CCS2 (DC Fast)' },
@@ -19,6 +20,7 @@ const ROAD_OPTIONS = [
 
 const DEFAULT_FORM = {
   origin: '', destination: '',
+  vehicleId: 'custom', vehicleName: 'Custom Vehicle',
   currentBatteryPct: 80, vehicleRangeKm: 400,
   batteryCapacityKwh: 60, targetBatteryAtDestPct: 20,
   chargeThresholdPct: 20,
@@ -27,10 +29,30 @@ const DEFAULT_FORM = {
   filters: { foodCourt: false, restroom: false, parking: false, fastChargerOnly: false, open24x7: false }
 }
 
-export default function TripForm({ onSubmit, loading }) {
-  const [form, setForm]           = useState(DEFAULT_FORM)
+function buildFormFromInitial(initial) {
+  if (!initial) return DEFAULT_FORM
+  const preset = VEHICLE_PRESETS.find(v => v.id === initial.vehicleId)
+  return {
+    ...DEFAULT_FORM,
+    ...initial,
+    vehicleName: preset?.name || initial.vehicleName || 'Custom Vehicle'
+  }
+}
+
+export default function TripForm({ onSubmit, loading, initialForm, formKey }) {
+  const [form, setForm] = useState(() => buildFormFromInitial(initialForm))
   const [locating, setLocating]   = useState(false)
   const [suggestions, setSuggestions] = useState({ origin: [], dest: [] })
+  const [waypointFields, setWaypointFields] = useState(
+    () => (initialForm?.waypoints || []).map(a => ({ address: a, suggestions: [] }))
+  )
+  const [shareCopied, setShareCopied] = useState(false)
+
+  // Re-initialise when parent passes a new initialForm (e.g. history replay or URL share)
+  useEffect(() => {
+    setForm(buildFormFromInitial(initialForm))
+    setWaypointFields((initialForm?.waypoints || []).map(a => ({ address: a, suggestions: [] })))
+  }, [formKey])
 
   function set(field, value) { setForm(p => ({ ...p, [field]: value })) }
   function setFilter(f) { setForm(p => ({ ...p, filters: { ...p.filters, [f]: !p.filters[f] } })) }
@@ -43,6 +65,22 @@ export default function TripForm({ onSubmit, loading }) {
     }))
   }
 
+  function handleVehicleChange(vehicleId) {
+    const preset = VEHICLE_PRESETS.find(v => v.id === vehicleId)
+    if (!preset || preset.id === 'custom') {
+      setForm(p => ({ ...p, vehicleId: 'custom', vehicleName: 'Custom Vehicle' }))
+      return
+    }
+    setForm(p => ({
+      ...p,
+      vehicleId: preset.id,
+      vehicleName: preset.name,
+      vehicleRangeKm: preset.range,
+      batteryCapacityKwh: preset.battery,
+      connectorTypes: preset.connectors || p.connectorTypes
+    }))
+  }
+
   async function fetchSuggestions(q, field) {
     if (q.length < 3) return setSuggestions(p => ({ ...p, [field]: [] }))
     try {
@@ -51,6 +89,32 @@ export default function TripForm({ onSubmit, loading }) {
     } catch (_) {}
   }
 
+  // — Waypoints —
+  function addWaypoint() {
+    if (waypointFields.length >= 3) return
+    setWaypointFields(p => [...p, { address: '', suggestions: [] }])
+  }
+  function removeWaypoint(idx) {
+    setWaypointFields(p => p.filter((_, i) => i !== idx))
+  }
+  async function fetchWpSuggestions(q, idx) {
+    if (q.length < 3) {
+      setWaypointFields(p => p.map((w, i) => i === idx ? { ...w, suggestions: [] } : w))
+      return
+    }
+    try {
+      const results = await geocodeSearch(q)
+      setWaypointFields(p => p.map((w, i) => i === idx ? { ...w, suggestions: results.slice(0, 4) } : w))
+    } catch (_) {}
+  }
+  function setWpAddress(idx, address) {
+    setWaypointFields(p => p.map((w, i) => i === idx ? { ...w, address } : w))
+  }
+  function setWpSuggestion(idx, address) {
+    setWaypointFields(p => p.map((w, i) => i === idx ? { ...w, address, suggestions: [] } : w))
+  }
+
+  // — GPS —
   function useCurrentLocation() {
     if (!navigator.geolocation) return alert('Geolocation not supported by your browser')
     setLocating(true)
@@ -83,10 +147,43 @@ export default function TripForm({ onSubmit, loading }) {
     }
   }
 
+  // — Share —
+  async function handleShare() {
+    if (!form.origin || !form.destination) return
+    const shareData = {
+      from: form.origin, to: form.destination,
+      v:    form.vehicleId,
+      batt: form.currentBatteryPct,
+      thr:  form.chargeThresholdPct,
+      road: form.roadPreference,
+      range: form.vehicleRangeKm,
+      kwh:  form.batteryCapacityKwh,
+      conn:    form.connectorTypes,
+      dest:    form.targetBatteryAtDestPct,
+      filters: form.filters,
+      wp:      waypointFields.map(w => w.address).filter(Boolean)
+    }
+    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(shareData))))
+    const url = `${window.location.origin}${window.location.pathname}?trip=${encoded}`
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      const inp = document.createElement('input')
+      inp.value = url; document.body.appendChild(inp); inp.select()
+      document.execCommand('copy'); document.body.removeChild(inp)
+    }
+    setShareCopied(true)
+    setTimeout(() => setShareCopied(false), 2500)
+  }
+
   function handleSubmit(e) {
     e.preventDefault()
     if (!form.origin.trim() || !form.destination.trim()) return
-    onSubmit({ ...form, roadOptions: buildRoadOptions() })
+    onSubmit({
+      ...form,
+      roadOptions: buildRoadOptions(),
+      waypoints: waypointFields.map(w => w.address).filter(a => a.trim())
+    })
   }
 
   return (
@@ -97,6 +194,7 @@ export default function TripForm({ onSubmit, loading }) {
         <p>Plan your EV trip across India</p>
       </div>
 
+      {/* ── Route ── */}
       <div className="form-section-label">Route</div>
 
       {/* Origin */}
@@ -126,6 +224,36 @@ export default function TripForm({ onSubmit, loading }) {
         )}
       </div>
 
+      {/* Waypoints */}
+      {waypointFields.map((wp, idx) => (
+        <div key={idx} className="form-group location-group waypoint-group">
+          <label>Via {idx + 1}</label>
+          <div className="location-input-row">
+            <input
+              type="text"
+              placeholder={`e.g. Lonavala`}
+              value={wp.address}
+              onChange={e => { setWpAddress(idx, e.target.value); fetchWpSuggestions(e.target.value, idx) }}
+              onBlur={() => setTimeout(() => setWaypointFields(p => p.map((w, i) => i === idx ? { ...w, suggestions: [] } : w)), 200)}
+            />
+            <button type="button" className="btn-remove-wp" onClick={() => removeWaypoint(idx)} title="Remove stop">✕</button>
+          </div>
+          {wp.suggestions.length > 0 && (
+            <ul className="suggestions">
+              {wp.suggestions.map((s, i) => (
+                <li key={i} onMouseDown={() => setWpSuggestion(idx, s.displayName)}>{s.displayName}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+
+      {waypointFields.length < 3 && (
+        <button type="button" className="btn-add-waypoint" onClick={addWaypoint}>
+          + Add a stop via
+        </button>
+      )}
+
       {/* Destination */}
       <div className="form-group location-group">
         <label>To</label>
@@ -148,7 +276,29 @@ export default function TripForm({ onSubmit, loading }) {
         )}
       </div>
 
+      {/* ── Vehicle ── */}
       <div className="form-section-label">Vehicle &amp; Battery</div>
+
+      {/* Vehicle preset selector */}
+      <div className="form-group">
+        <label>Select Your Vehicle</label>
+        <select
+          className="vehicle-select"
+          value={form.vehicleId}
+          onChange={e => handleVehicleChange(e.target.value)}
+        >
+          {VEHICLE_PRESETS.map(v => (
+            <option key={v.id} value={v.id}>{v.name}</option>
+          ))}
+        </select>
+        {form.vehicleId !== 'custom' && (
+          <div className="vehicle-spec-row">
+            <span className="vehicle-spec-badge">{form.vehicleRangeKm} km range</span>
+            <span className="vehicle-spec-badge">{form.batteryCapacityKwh} kWh</span>
+            <span className="vehicle-spec-hint">Override below if needed</span>
+          </div>
+        )}
+      </div>
 
       {/* Battery sliders */}
       <div className="form-row">
@@ -174,11 +324,9 @@ export default function TripForm({ onSubmit, loading }) {
       <div className="form-group">
         <label>Start charging when battery drops to</label>
         <div className="range-with-value">
-          <input
-            type="range" min="5" max="40" step="5"
+          <input type="range" min="5" max="40" step="5"
             value={form.chargeThresholdPct}
-            onChange={e => set('chargeThresholdPct', +e.target.value)}
-          />
+            onChange={e => set('chargeThresholdPct', +e.target.value)} />
           <span className="range-value">{form.chargeThresholdPct}%</span>
         </div>
         <div className="threshold-hint">
@@ -189,7 +337,7 @@ export default function TripForm({ onSubmit, loading }) {
         </div>
       </div>
 
-      {/* Vehicle specs */}
+      {/* Vehicle specs (editable override) */}
       <div className="form-row">
         <div className="form-group">
           <label>Full Range (km)</label>
@@ -203,9 +351,9 @@ export default function TripForm({ onSubmit, loading }) {
         </div>
       </div>
 
+      {/* ── Charger Preferences ── */}
       <div className="form-section-label">Charger Preferences</div>
 
-      {/* Connectors */}
       <div className="form-group">
         <label>Connector Types</label>
         <div className="connector-chips">
@@ -219,7 +367,6 @@ export default function TripForm({ onSubmit, loading }) {
         </div>
       </div>
 
-      {/* Road preference */}
       <div className="form-group">
         <label>Route Type</label>
         <div className="road-options">
@@ -234,7 +381,6 @@ export default function TripForm({ onSubmit, loading }) {
         </div>
       </div>
 
-      {/* Amenity filters */}
       <div className="form-group">
         <label>Station Amenity Filters</label>
         <div className="filter-grid">
@@ -253,8 +399,18 @@ export default function TripForm({ onSubmit, loading }) {
         </div>
       </div>
 
+      {/* ── Actions ── */}
       <button type="submit" className="btn-plan" disabled={loading}>
         {loading ? '⏳ Planning your trip…' : '⚡ Plan My Trip →'}
+      </button>
+
+      <button
+        type="button"
+        className={`btn-share ${shareCopied ? 'btn-share-copied' : ''}`}
+        onClick={handleShare}
+        disabled={!form.origin || !form.destination}
+      >
+        {shareCopied ? '✓ Link copied!' : '🔗 Share this trip'}
       </button>
     </form>
   )

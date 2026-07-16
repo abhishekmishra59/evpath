@@ -7,7 +7,8 @@ router.post('/plan-trip', async (req, res) => {
     const {
       origin, destination,
       currentBatteryPct, vehicleRangeKm, batteryCapacityKwh,
-      connectorTypes, targetBatteryAtDestPct, chargeThresholdPct, filters, roadOptions
+      connectorTypes, targetBatteryAtDestPct, chargeThresholdPct,
+      filters, roadOptions, waypoints
     } = req.body;
 
     if (!origin || !destination)
@@ -24,7 +25,8 @@ router.post('/plan-trip', async (req, res) => {
       targetBatteryAtDestPct: Number(targetBatteryAtDestPct || 20),
       chargeThresholdPct:     Number(chargeThresholdPct || 20),
       filters:                filters || {},
-      roadOptions:            roadOptions || {}
+      roadOptions:            roadOptions || {},
+      waypoints:              Array.isArray(waypoints) ? waypoints.filter(Boolean) : []
     });
 
     res.json({ routes });

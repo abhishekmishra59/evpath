@@ -1,0 +1,16 @@
+export const VEHICLE_PRESETS = [
+  { id: 'custom',         name: 'Custom Vehicle',         range: 300,  battery: 40.0 },
+  { id: 'nexon',          name: 'Tata Nexon EV',           range: 312,  battery: 30.2, connectors: ['CCS2', 'Type2'] },
+  { id: 'nexon-max',      name: 'Tata Nexon EV Max',       range: 437,  battery: 40.5, connectors: ['CCS2', 'Type2'] },
+  { id: 'punch',          name: 'Tata Punch EV LR',        range: 421,  battery: 35.0, connectors: ['CCS2', 'Type2'] },
+  { id: 'tigor',          name: 'Tata Tigor EV',           range: 306,  battery: 26.0, connectors: ['Type2'] },
+  { id: 'curvv',          name: 'Tata Curvv EV',           range: 502,  battery: 55.0, connectors: ['CCS2', 'Type2'] },
+  { id: 'mg-zs',          name: 'MG ZS EV',                range: 461,  battery: 50.3, connectors: ['CCS2', 'Type2'] },
+  { id: 'mg-comet',       name: 'MG Comet EV',             range: 230,  battery: 17.3, connectors: ['Type2'] },
+  { id: 'mg-windsor',     name: 'MG Windsor EV',           range: 331,  battery: 38.0, connectors: ['CCS2', 'Type2'] },
+  { id: 'hyundai-kona',   name: 'Hyundai Kona EV',         range: 452,  battery: 39.2, connectors: ['CCS2', 'Type2'] },
+  { id: 'hyundai-ioniq5', name: 'Hyundai IONIQ 5',         range: 631,  battery: 72.6, connectors: ['CCS2', 'Type2'] },
+  { id: 'kia-ev6',        name: 'Kia EV6',                 range: 708,  battery: 77.4, connectors: ['CCS2', 'Type2'] },
+  { id: 'byd-atto3',      name: 'BYD Atto 3',              range: 521,  battery: 60.5, connectors: ['CCS2', 'Type2'] },
+  { id: 'byd-seal',       name: 'BYD Seal',                range: 650,  battery: 82.5, connectors: ['CCS2', 'Type2'] },
+]

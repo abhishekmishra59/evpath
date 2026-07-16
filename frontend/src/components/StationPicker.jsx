@@ -57,6 +57,13 @@ export default function StationPicker({ stop, selectedIndex, onSelect, batteryCa
         </div>
       </div>
 
+      {/* Adjustment notice when stop was moved earlier */}
+      {stop.wasAdjusted && (
+        <div className="stop-adjusted-banner">
+          ⚡ Stop moved <strong>{stop.adjustedEarlierBy} km earlier</strong> — no chargers found at the planned point. Best available chargers shown below.
+        </div>
+      )}
+
       {/* Station option cards — horizontal scroll */}
       <p className="picker-label">
         {options.length} station{options.length > 1 ? 's' : ''} near this stop — pick one:

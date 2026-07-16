@@ -168,10 +168,26 @@ export default function NavigationView({ route, selectedStops, onExit }) {
         <MapView
           route={route}
           selectedStops={selectedStops}
-          navPosition={autoFollow ? position : null}
+          navPosition={position}
+          followUser={autoFollow}
+          onMapDrag={() => setAutoFollow(false)}
           navMode={true}
         />
-        <button className="nav-recenter" onClick={() => setAutoFollow(true)} title="Re-center">⊕</button>
+        <button
+          className={`nav-gps-btn ${autoFollow ? 'nav-gps-active' : ''}`}
+          onClick={() => setAutoFollow(true)}
+          title={autoFollow ? 'Following your location' : 'Centre on my location'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="7"/>
+            <line x1="12" y1="1" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="1" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="23" y2="12"/>
+          </svg>
+          {!position && <span className="nav-gps-wait">…</span>}
+        </button>
       </div>
 
       {/* Bottom status bar */}

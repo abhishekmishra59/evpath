@@ -18,7 +18,8 @@ async function planTrip(tripRequest) {
     currentBatteryPct, vehicleRangeKm, batteryCapacityKwh,
     connectorTypes = [], targetBatteryAtDestPct = 20,
     chargeThresholdPct = 20,
-    filters = {}, roadOptions = {}
+    filters = {}, roadOptions = {},
+    waypoints = []
   } = tripRequest;
 
   const [originResults, destResults] = await Promise.all([
@@ -33,9 +34,17 @@ async function planTrip(tripRequest) {
   const endCoord   = { lat: destResults[0].lat,   lng: destResults[0].lng };
   const connectorIds = connectorTypes.map(t => CONNECTOR_ID_MAP[t]).filter(Boolean);
 
+  // Geocode any via waypoints the user added
+  const waypointCoords = [];
+  for (const wp of waypoints) {
+    if (!wp?.trim()) continue;
+    const results = await geocode(wp);
+    if (results.length) waypointCoords.push({ lat: results[0].lat, lng: results[0].lng });
+  }
+
   // ONE ORS call for the base route — all 3 variants share the same geometry.
   // 3 variants differ only in charging stop strategy, not the road path.
-  const baseRoute = await getRoute(startCoord, endCoord, [], roadOptions);
+  const baseRoute = await getRoute(startCoord, endCoord, waypointCoords, roadOptions);
 
   // Fetch station options once per stop location (shared across all variants)
   const stopIntervals = ev.chargingStopIntervals(baseRoute.distanceKm, vehicleRangeKm, currentBatteryPct, chargeThresholdPct);
@@ -61,16 +70,54 @@ async function planTrip(tripRequest) {
 async function fetchStationsForStops(stopIntervals, geometryCoords, totalDistanceKm, connectorIds) {
   const results = [];
   for (const stopInfo of stopIntervals) {
-    const fraction = stopInfo.kmFromStart / totalDistanceKm;
-    const coord = interpolateAlongRoute(geometryCoords, fraction);
-    let stations = [];
-    for (const radius of [10, 25, 50]) {
-      stations = await getStationsNear(coord.lat, coord.lng, radius, connectorIds);
-      if (stations.length >= 1) break;
-    }
-    results.push({ coord, stations });
+    const result = await findBestStationsForStop(stopInfo, geometryCoords, totalDistanceKm, connectorIds);
+    results.push(result);
   }
   return results;
+}
+
+// Search at a single coordinate with expanding radius until we have >= 3 stations.
+async function searchWithExpandingRadius(coord, connectorIds) {
+  let best = [];
+  for (const radius of [10, 25, 50, 100]) {
+    const found = await getStationsNear(coord.lat, coord.lng, radius, connectorIds);
+    if (found.length > best.length) best = found;
+    if (best.length >= 3) break;
+  }
+  return best;
+}
+
+// Find the best set of stations for a stop, adjusting the stop point earlier
+// along the route if the planned location doesn't have enough chargers.
+async function findBestStationsForStop(stopInfo, geometryCoords, totalDistanceKm, connectorIds) {
+  const targetKm = stopInfo.kmFromStart;
+  const primaryCoord = interpolateAlongRoute(geometryCoords, targetKm / totalDistanceKm);
+
+  let stations = await searchWithExpandingRadius(primaryCoord, connectorIds);
+  let coord = primaryCoord;
+  let adjustedKm = null;
+
+  if (stations.length >= 3) {
+    return { coord, stations, adjustedKm };
+  }
+
+  // Not enough stations at the planned stop — look earlier along the route
+  // (before the battery would hit the minimum threshold).
+  for (const offsetKm of [20, 35, 55]) {
+    const earlyKm = Math.max(5, targetKm - offsetKm);
+    if (earlyKm >= targetKm) continue;
+    const earlyCoord = interpolateAlongRoute(geometryCoords, earlyKm / totalDistanceKm);
+    const earlyStations = await searchWithExpandingRadius(earlyCoord, connectorIds);
+
+    if (earlyStations.length > stations.length) {
+      stations = earlyStations;
+      coord = earlyCoord;
+      adjustedKm = earlyKm;
+    }
+    if (stations.length >= 3) break;
+  }
+
+  return { coord, stations, adjustedKm };
 }
 
 function buildVariant({
@@ -84,9 +131,12 @@ function buildVariant({
   let totalChargeTimeMin = 0;
 
   stopIntervals.forEach((stopInfo, i) => {
-    const { coord, stations } = stationsPerStop[i];
+    const { coord, stations, adjustedKm } = stationsPerStop[i];
     const stationOptions = rankStations(stations, variant, filters).slice(0, 5);
     const selectedStation = stationOptions[0] || null;
+
+    // Use adjusted km if the stop was moved earlier to find chargers
+    const kmFromStart = adjustedKm ?? stopInfo.kmFromStart;
 
     // arrivalBatteryPct is the user-defined threshold — the point they want to stop and charge
     const arrivalBatteryPct = stopInfo.batteryOnArrival ?? chargeThresholdPct;
@@ -100,7 +150,9 @@ function buildVariant({
 
     chargingStops.push({
       stopNumber: i + 1,
-      kmFromStart: stopInfo.kmFromStart,
+      kmFromStart,
+      wasAdjusted: adjustedKm !== null,
+      adjustedEarlierBy: adjustedKm !== null ? (stopInfo.kmFromStart - adjustedKm) : 0,
       coordOnRoute: coord,
       stationOptions,
       selectedStationIndex: 0,

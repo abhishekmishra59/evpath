@@ -1,13 +1,73 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import RouteCard from './RouteCard'
 import MapView from './MapView'
 import StationPicker from './StationPicker'
 
 function fmt(min) { const h = Math.floor(min / 60); const m = min % 60; return h ? `${h}h ${m}m` : `${m}m` }
 
-export default function RouteResults({ routes, tripMeta, batteryCapacityKwh = 60, onBack, onStartNav }) {
-  const [selectedRoute, setSelectedRoute]   = useState(null)
+function ShareButton({ formData, selectedRoute, selectedStations }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleShare() {
+    if (!formData) return
+    const shareData = {
+      from:    formData.origin,
+      to:      formData.destination,
+      v:       formData.vehicleId    || 'custom',
+      batt:    formData.currentBatteryPct,
+      thr:     formData.chargeThresholdPct,
+      road:    formData.roadPreference,
+      range:   formData.vehicleRangeKm,
+      kwh:     formData.batteryCapacityKwh,
+      conn:    formData.connectorTypes,
+      dest:    formData.targetBatteryAtDestPct,
+      filters: formData.filters,
+      wp:      (formData.waypoints || []).filter(Boolean),
+      // Encode selected route + stations only when sharing from detail page
+      ...(selectedRoute && {
+        variant: selectedRoute.variant,
+        stops:   selectedRoute.chargingStops.map((_, i) => selectedStations?.[i] ?? 0)
+      })
+    }
+    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(shareData))))
+    const url = `${window.location.origin}${window.location.pathname}?trip=${encoded}`
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      const inp = document.createElement('input')
+      inp.value = url; document.body.appendChild(inp); inp.select()
+      document.execCommand('copy'); document.body.removeChild(inp)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
+  }
+
+  return (
+    <button className={`btn-share-inline ${copied ? 'btn-share-copied' : ''}`} onClick={handleShare}>
+      {copied ? '✓ Copied!' : '🔗 Share'}
+    </button>
+  )
+}
+
+export default function RouteResults({ routes, tripMeta, batteryCapacityKwh = 60, formData, initialSelection, onBack, onRefine, onStartNav }) {
+  const [selectedRoute, setSelectedRoute]       = useState(null)
   const [selectedStations, setSelectedStations] = useState({})
+  const selectionApplied = useRef(false)
+
+  // Auto-select route + stations when a shared selection is decoded
+  useEffect(() => {
+    if (!initialSelection || !routes || selectionApplied.current) return
+    const route = routes.find(r => r.variant === initialSelection.variant)
+    if (!route) return
+    selectionApplied.current = true
+    setSelectedRoute(route)
+    const stopsArray = initialSelection.stops || []
+    const stationsMap = route.chargingStops.reduce((acc, _, i) => {
+      acc[i] = stopsArray[i] ?? 0
+      return acc
+    }, {})
+    setSelectedStations(stationsMap)
+  }, [initialSelection, routes])
 
   function selectRoute(route) {
     setSelectedRoute(route)
@@ -29,6 +89,10 @@ export default function RouteResults({ routes, tripMeta, batteryCapacityKwh = 60
           <div className="detail-title">
             <span className="route-label-badge">{selectedRoute.label}</span>
             <span className="trip-cities">{tripMeta.origin} → {tripMeta.destination}</span>
+          </div>
+          <div className="detail-header-actions">
+            <button className="btn-refine" onClick={onRefine}>✏ Refine</button>
+            <ShareButton formData={formData} selectedRoute={selectedRoute} selectedStations={selectedStations} />
           </div>
         </div>
 
@@ -100,6 +164,8 @@ export default function RouteResults({ routes, tripMeta, batteryCapacityKwh = 60
       <div className="results-header">
         <div className="results-back-row">
           <button className="btn-back" onClick={onBack}>← New Trip</button>
+          <button className="btn-refine" onClick={onRefine}>✏ Refine Search</button>
+          <ShareButton formData={formData} />
         </div>
         <div className="results-trip-title">
           <span>{tripMeta.origin}</span>

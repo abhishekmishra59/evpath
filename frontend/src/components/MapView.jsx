@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -14,18 +14,20 @@ function makeIcon(html, size = 36) {
   return L.divIcon({ html, className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2] })
 }
 
-const startIcon    = makeIcon('<div class="map-marker marker-start">A</div>')
-const endIcon      = makeIcon('<div class="map-marker marker-end">B</div>')
-const chargerIcon  = makeIcon('<div class="map-marker marker-charger">⚡</div>')
-const altIcon      = makeIcon('<div class="map-marker marker-alt">⚡</div>', 28)
-const userIcon     = makeIcon('<div class="map-marker marker-user"></div>', 20)
+const startIcon   = makeIcon('<div class="map-marker marker-start">A</div>')
+const endIcon     = makeIcon('<div class="map-marker marker-end">B</div>')
+const chargerIcon = makeIcon('<div class="map-marker marker-charger">⚡</div>')
+const altIcon     = makeIcon('<div class="map-marker marker-alt">⚡</div>', 28)
+const userIcon    = makeIcon('<div class="map-marker marker-user"><div class="marker-user-dot"></div></div>', 32)
 
 export default function MapView({
   route,
-  selectedStops,       // array: which station is selected per stop
-  onStationClick,      // (stopIdx, stationIdx) => void
-  navPosition,         // { lat, lng } — live GPS position (navigation mode)
-  navMode              // bool
+  selectedStops,
+  onStationClick,
+  navPosition,   // { lat, lng } — live GPS position
+  followUser,    // bool — whether to auto-pan to user position
+  onMapDrag,     // () => void — called when user manually pans
+  navMode
 }) {
   const containerRef = useRef(null)
   const mapRef       = useRef(null)
@@ -38,16 +40,19 @@ export default function MapView({
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map)
+
+    // Tell parent when user manually drags (so it can disable auto-follow)
+    map.on('dragstart', () => onMapDrag?.())
+
     mapRef.current = map
     return () => { map.remove(); mapRef.current = null }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Draw route + station markers whenever route changes
   useEffect(() => {
     const map = mapRef.current
     if (!map || !route) return
 
-    // Clear old layers
     const { route: rLayer, markers } = layersRef.current
     if (rLayer) rLayer.remove()
     markers.forEach(m => m.remove())
@@ -60,22 +65,17 @@ export default function MapView({
       const polyline = L.polyline(positions, { color: '#00E094', weight: 5, opacity: 0.9 }).addTo(map)
       layersRef.current.route = polyline
 
-      // Start / End markers
       const startM = L.marker(positions[0], { icon: startIcon })
         .bindPopup('<strong>Start</strong>').addTo(map)
       const endM = L.marker(positions[positions.length - 1], { icon: endIcon })
         .bindPopup('<strong>Destination</strong>').addTo(map)
       newMarkers.push(startM, endM)
 
-      // Fit map
       map.fitBounds(polyline.getBounds(), { padding: [48, 48] })
     }
 
-    // Charging stop markers
     ;(route.chargingStops || []).forEach((stop, stopIdx) => {
       const selIdx = selectedStops?.[stopIdx] ?? 0
-
-      // Show all station options as markers
       ;(stop.stationOptions || [stop.station]).forEach((station, sIdx) => {
         if (!station?.lat || !station?.lng) return
         const isSelected = sIdx === selIdx
@@ -89,7 +89,7 @@ export default function MapView({
                 ● ${station.status}
               </span><br/>
               ${station.maxPowerKw ? `${station.maxPowerKw}kW` : ''}
-              ${isSelected ? '<br/><em style="color:#3b82f6">✓ Selected for stop ' + (stopIdx + 1) + '</em>' : ''}
+              ${isSelected ? '<br/><em style="color:#00E094">✓ Selected for stop ' + (stopIdx + 1) + '</em>' : ''}
             </div>
           `)
           .addTo(map)
@@ -101,22 +101,26 @@ export default function MapView({
     layersRef.current.markers = newMarkers
   }, [route, selectedStops])
 
-  // Live GPS position marker
-  const updateUserMarker = useCallback((pos) => {
-    const map = mapRef.current
-    if (!map || !pos) return
-    if (layersRef.current.user) {
-      layersRef.current.user.setLatLng([pos.lat, pos.lng])
-    } else {
-      layersRef.current.user = L.marker([pos.lat, pos.lng], { icon: userIcon, zIndexOffset: 1000 })
-        .addTo(map)
-    }
-    if (navMode) map.panTo([pos.lat, pos.lng], { animate: true, duration: 0.5 })
-  }, [navMode])
-
+  // Always keep the user marker at the latest GPS position
   useEffect(() => {
-    updateUserMarker(navPosition)
-  }, [navPosition, updateUserMarker])
+    const map = mapRef.current
+    if (!map || !navPosition) return
+    if (layersRef.current.user) {
+      layersRef.current.user.setLatLng([navPosition.lat, navPosition.lng])
+    } else {
+      layersRef.current.user = L.marker(
+        [navPosition.lat, navPosition.lng],
+        { icon: userIcon, zIndexOffset: 1000 }
+      ).addTo(map)
+    }
+  }, [navPosition])
+
+  // Pan to user only when followUser is true — fires immediately on button click too
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !navPosition || !followUser) return
+    map.panTo([navPosition.lat, navPosition.lng], { animate: true, duration: 0.5 })
+  }, [navPosition, followUser])
 
   return (
     <div
